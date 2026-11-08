@@ -18,7 +18,11 @@ MODELS = [m.strip() for m in os.environ.get(
 
 SYSTEM_PROMPT = (
     "Tu es un assistant sympa sur un serveur Discord. "
-    "Réponds de façon claire et concise, dans la langue de l'utilisateur."
+    "Réponds de façon claire et concise, dans la langue de l'utilisateur. "
+    "Chaque message d'utilisateur est préfixé par « pseudo (id:NUMÉRO) : ». "
+    "Le NUMÉRO identifie de façon unique la personne : deux personnes avec le même pseudo "
+    "mais des id différents sont deux personnes différentes. "
+    "N'écris jamais ce préfixe dans tes réponses, et n'affiche pas les id sauf si on te le demande."
 )
 
 # Instructions personnalisées (sauvegardées dans un fichier).
@@ -149,11 +153,11 @@ async def on_message(message: discord.Message):
     async for m in message.channel.history(limit=100, before=message):
         role = "model" if m.author == client.user else "user"
         history.append(types.Content(role=role, parts=[
-            types.Part(text=f"{m.author.display_name}: {m.content}" if role == "user" else m.content)
+            types.Part(text=f"{m.author.display_name} (id:{m.author.id}): {m.content}" if role == "user" else m.content)
         ]))
     history.reverse()
     history.append(types.Content(role="user", parts=[
-        types.Part(text=f"{message.author.display_name}: {message.content}")
+        types.Part(text=f"{message.author.display_name} (id:{message.author.id}): {message.content}")
     ]))
 
     async with message.channel.typing():
