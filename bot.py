@@ -8,7 +8,12 @@ DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 GUILD_ID = 1375550312508817518
 CHANNEL_ID = 1568978275978715287
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Liste de modèles essayés dans l'ordre (repli automatique en cas de surcharge)
+MODELS = [m.strip() for m in os.environ.get(
+    "GEMINI_MODEL",
+    "gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3.6-flash,gemini-3.5-flash,"
+    "gemini-flash-lite-latest,gemini-flash-latest,gemini-2.5-flash-lite,gemini-2.5-flash"
+).split(",") if m.strip()]
 
 SYSTEM_PROMPT = (
     "Tu es un assistant sympa sur un serveur Discord. "
@@ -79,16 +84,20 @@ async def on_message(message: discord.Message):
     ]))
 
     async with message.channel.typing():
-        try:
-            resp = await gemini.aio.models.generate_content(
-                model=MODEL,
-                contents=history,
-                config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-            )
-            text = resp.text or "Je n'ai pas de réponse."
-        except Exception as e:
-            print("Erreur Gemini:", e)
-            text = "⚠️ Erreur avec l'IA, réessaie plus tard."
+        text = None
+        for model in MODELS:
+            try:
+                resp = await gemini.aio.models.generate_content(
+                    model=model,
+                    contents=history,
+                    config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+                )
+                text = resp.text or "Je n'ai pas de réponse."
+                break
+            except Exception as e:
+                print(f"Erreur Gemini ({model}):", e)
+        if text is None:
+            text = "⚠️ L'IA est surchargée, réessaie dans un instant."
 
     for i in range(0, len(text), 1990):
         await message.reply(text[i:i + 1990], mention_author=False)
