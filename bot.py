@@ -1,4 +1,5 @@
 import os
+import json
 import discord
 from discord import app_commands
 from google import genai
@@ -19,6 +20,38 @@ SYSTEM_PROMPT = (
     "Tu es un assistant sympa sur un serveur Discord. "
     "Réponds de façon claire et concise, dans la langue de l'utilisateur."
 )
+
+# Instructions personnalisées (sauvegardées dans un fichier).
+# Sur Railway, ajoute un Volume monté sur /data et mets INSTRUCTIONS_FILE=/data/instructions.json
+# pour qu'elles survivent aux redéploiements.
+INSTRUCTIONS_FILE = os.environ.get("INSTRUCTIONS_FILE", "instructions.json")
+
+
+def load_instructions() -> list[str]:
+    try:
+        with open(INSTRUCTIONS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_instructions(items: list[str]) -> None:
+    d = os.path.dirname(INSTRUCTIONS_FILE)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(INSTRUCTIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False)
+
+
+custom_instructions = load_instructions()
+
+
+def build_system_prompt() -> str:
+    if not custom_instructions:
+        return SYSTEM_PROMPT
+    extra = "\n".join(f"- {i}" for i in custom_instructions)
+    return f"{SYSTEM_PROMPT}\n\nInstructions supplémentaires à suivre impérativement :\n{extra}"
+
 
 intents = discord.Intents.default()
 intents.message_content = True  # à activer aussi dans le portail développeur
@@ -46,6 +79,46 @@ async def stop(interaction: discord.Interaction):
     global active
     active = False
     await interaction.response.send_message("⏸️ Bot désactivé.")
+
+
+instructions_group = app_commands.Group(
+    name="instructions",
+    description="Gérer la façon dont l'IA répond",
+    guild_ids=[GUILD_ID],
+    default_permissions=discord.Permissions(administrator=True),
+)
+
+
+@instructions_group.command(name="add", description="Ajoute une instruction")
+@app_commands.describe(instructions="Comment l'IA doit répondre")
+async def instructions_add(interaction: discord.Interaction, instructions: str):
+    custom_instructions.append(instructions.strip())
+    save_instructions(custom_instructions)
+    await interaction.response.send_message(
+        f"✅ Instruction ajoutée ({len(custom_instructions)} au total).", ephemeral=True
+    )
+
+
+@instructions_group.command(name="get", description="Affiche les instructions actuelles")
+async def instructions_get(interaction: discord.Interaction):
+    if not custom_instructions:
+        await interaction.response.send_message("Aucune instruction personnalisée.", ephemeral=True)
+        return
+    text = "\n".join(f"{n}. {i}" for n, i in enumerate(custom_instructions, 1))
+    chunks = [text[i:i + 1900] for i in range(0, len(text), 1900)]
+    await interaction.response.send_message(chunks[0], ephemeral=True)
+    for c in chunks[1:]:
+        await interaction.followup.send(c, ephemeral=True)
+
+
+@instructions_group.command(name="remove", description="Supprime toutes les instructions")
+async def instructions_remove(interaction: discord.Interaction):
+    custom_instructions.clear()
+    save_instructions(custom_instructions)
+    await interaction.response.send_message("🗑️ Toutes les instructions ont été supprimées.", ephemeral=True)
+
+
+tree.add_command(instructions_group)
 
 
 @client.event
@@ -90,7 +163,7 @@ async def on_message(message: discord.Message):
                 resp = await gemini.aio.models.generate_content(
                     model=model,
                     contents=history,
-                    config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+                    config=types.GenerateContentConfig(system_instruction=build_system_prompt()),
                 )
                 text = resp.text or "Je n'ai pas de réponse."
                 break
